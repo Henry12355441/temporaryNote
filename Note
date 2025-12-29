@@ -1,1 +1,60 @@
-11
+
+你可以在 `ON CONFLICT ... DO UPDATE` 裡用條件運算 (CASE) 來判斷 incoming（`EXCLUDED.bet`）是否大於 existing（`table.bet`，這裡假設表名為 `earning_qualified_ratings`）。  
+若比較結果為 true，就把 `bet_times` + 1；否則維持原值不變。
+
+範例 SQL（請依實際欄位、表名調整）：
+
+```sql
+INSERT INTO earning_qualified_ratings (
+    rating_type, tran_id, acct, player_id, void_tran_id,
+    gaming_dtm, post_dtm, modified_dtm, rating_start_dtm, rating_end_dtm,
+    theor_win, bet, casino_win, point, dollar, comp, ebonus, mcomp,
+    card_tier, casino_code, dept_code, game_code, bet_type, chip_set,
+    locn_code, locn_info3, locn_info4, denom_code, strat_id, strategy_code,
+    rating_category, report_segment, report_group, report_area, segment,
+    slot_location, table_location, is_void, st_rating_id, bet_times
+)
+VALUES (
+    @RatingType, @TranId, @Acct, @PlayerId, @VoidTranId,
+    @GamingDtm, @PostDtm, @ModifiedDtm, @RatingStartDtm, @RatingEndDtm,
+    @TheorWin, @Bet, @CasinoWin, @Point, @Dollar, @Comp, @EBonus, @MComp,
+    @CardTier, @CasinoCode, @DeptCode, @GameCode, @BetType, @ChipSet,
+    @LocnCode, @LocnInfo3, @LocnInfo4, @DenomCode, @StratId, @StrategyCode,
+    @RatingCategory, @ReportSegment, @ReportGroup, @ReportArea, @Segment,
+    @SlotLocation, @TableLocation, @IsVoid, @StRatingId, @BetTimes
+)
+ON CONFLICT ON CONSTRAINT earning_qualified_ratings_pk
+DO UPDATE SET
+    -- 其它欄位照你原本的寫法更新，例：
+    post_dtm      = EXCLUDED.post_dtm,
+    modified_dtm  = EXCLUDED.modified_dtm,
+    theor_win     = EXCLUDED.theor_win,
+    bet           = EXCLUDED.bet,
+    casino_win    = EXCLUDED.casino_win,
+    -- ...
+
+    -- 只在 incoming bet > existing bet 時，才使 bet_times + 1
+    bet_times = CASE
+        WHEN EXCLUDED.bet > earning_qualified_ratings.bet
+            THEN earning_qualified_ratings.bet_times + 1
+        ELSE earning_qualified_ratings.bet_times
+    END,
+
+    updated_at = now();
+```
+
+重點說明：  
+
+- `EXCLUDED.bet`：這次 `INSERT` 傳進來的 bet（incoming）。  
+- `earning_qualified_ratings.bet`：資料表目前已存在那筆的 bet（existing）。  
+- `CASE WHEN EXCLUDED.bet > earning_qualified_ratings.bet THEN ... ELSE ... END`  
+  控制何時加 1，何時不變。  
+
+如果你不想在 `ELSE` 重複寫欄位名，也可以寫成：
+
+```sql
+bet_times = earning_qualified_ratings.bet_times +
+            CASE WHEN EXCLUDED.bet > earning_qualified_ratings.bet THEN 1 ELSE 0 END
+```
+
+效果相同。
