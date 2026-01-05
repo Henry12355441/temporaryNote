@@ -1,76 +1,20 @@
-const string insertStmt = """
-insert into earning_qualified_ratings (
-    rating_type, tran_id, acct, player_id, void_tran_id,
-    gaming_dtm, post_dtm, modified_dtm, rating_start_dtm, rating_end_dtm,
-    theor_win, bet, casino_win, point, dollar, comp, ebonus, mcomp,
-    card_tier, casino_code, dept_code, game_code, bet_type, chip_set,
-    locn_code, locn_info3, locn_info4, denom_code, strat_id, strategy_code,
-    rating_category, report_segment, report_group, report_area, segment,
-    slot_location, table_location, is_void, st_rating_id, bet_times
-)
-values (
-    @RatingType, @TranId, @Acct, @PlayerId, @VoidTranId,
-    @GamingDtm, @PostDtm, @ModifiedDtm, @RatingStartDtm, @RatingEndDtm,
-    @TheorWin, @Bet, @CasinoWin, @Point, @Dollar, @Comp, @EBonus, @MComp,
-    @CardTier, @CasinoCode, @DeptCode, @GameCode, @BetType, @ChipSet,
-    @LocnCode, @LocnInfo3, @LocnInfo4, @DenomCode, @StratId, @StrategyCode,
-    @RatingCategory, @ReportSegment, @ReportGroup, @ReportArea, @Segment,
-    @SlotLocation, @TableLocation, @IsVoid, @StRatingId, @BetTimes
-)
-on conflict on constraint earning_qualified_ratings_pk
-do update set
-    player_id       = excluded.player_id,
-    void_tran_id    = excluded.void_tran_id,
-    post_dtm        = excluded.post_dtm,
-    modified_dtm    = excluded.modified_dtm,
-    gaming_dtm      = excluded.gaming_dtm,
-    rating_start_dtm= excluded.rating_start_dtm,
-    rating_end_dtm  = excluded.rating_end_dtm,
-    theor_win       = excluded.theor_win,
-    bet             = excluded.bet,
-    casino_win      = excluded.casino_win,
-    point           = excluded.point,
-    dollar          = excluded.dollar,
-    comp            = excluded.comp,
-    ebonus          = excluded.ebonus,
-    mcomp           = excluded.mcomp,
-    card_tier       = excluded.card_tier,
-    casino_code     = excluded.casino_code,
-    dept_code       = excluded.dept_code,
-    game_code       = excluded.game_code,
-    bet_type        = excluded.bet_type,
-    chip_set        = excluded.chip_set,
-    locn_code       = excluded.locn_code,
-    locn_info3      = excluded.locn_info3,
-    locn_info4      = excluded.locn_info4,
-    denom_code      = excluded.denom_code,
-    strat_id        = excluded.strat_id,
-    strategy_code   = excluded.strategy_code,
-    rating_category = excluded.rating_category,
-    report_segment  = excluded.report_segment,
-    report_group    = excluded.report_group,
-    report_area     = excluded.report_area,
-    segment         = excluded.segment,
-    slot_location   = excluded.slot_location,
-    table_location  = excluded.table_location,
-    is_void         = excluded.is_void,
-    st_rating_id    = excluded.st_rating_id,
-
-    -- 這一行是你要的邏輯：只有當 incoming bet > existing bet 時才 +1
-    bet_times = earning_qualified_ratings.bet_times +
-        CASE
-            WHEN excluded.bet > earning_qualified_ratings.bet THEN 1
-            ELSE 0
-        END,
-
-    updated_at = now()
-""";
-
-如果你不想在 `ELSE` 重複寫欄位名，也可以寫成：
-
-```sql
-bet_times = earning_qualified_ratings.bet_times +
-            CASE WHEN EXCLUDED.bet > earning_qualified_ratings.bet THEN 1 ELSE 0 END
-```
-
-效果相同。
+SELECT
+    schemaname,
+    relname        AS table_name,
+    indexrelname   AS index_name,
+    idx_scan,
+    idx_tup_read,
+    idx_tup_fetch,
+    pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
+    pg_get_indexdef(indexrelid)                  AS index_def
+FROM pg_stat_user_indexes
+JOIN pg_index USING (indexrelid)
+WHERE
+    idx_scan < 50                      -- 使用次数阈值，自行调整
+    AND pg_relation_size(indexrelid) > 8 * 1024 * 1024  -- 大于 8MB 的索引，避免关注太小的
+    AND NOT indisprimary              -- 排除主键索引
+    AND NOT indisunique               -- 排除 UNIQUE 索引
+    AND NOT indisexclusion            -- 排除排它约束索引
+ORDER BY
+    idx_scan ASC,
+    pg_relation_size(indexrelid) DESC;
