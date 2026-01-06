@@ -1,84 +1,182 @@
-using System.Text.Json;
-using Dapper;
-using Npgsql; // 假設你用 PostgreSQL
-
-public class RatingRepository
-{
-    private readonly IDbConnection dbConnection;
-
-    public RatingRepository(IDbConnection dbConnection)
-    {
-        this.dbConnection = dbConnection;
-    }
-
-    public async Task<IEnumerable<RatingDailySummary>> WriteToDbAsync(
-        IEnumerable<QualifyingRating> ratings,
-        CancellationToken cancellationToken = default)
-    {
-        // ratings 可能是這一批 message 裡的多筆
-        var ratingList = ratings.ToList();
-        if (ratingList.Count == 0)
-            return Array.Empty<RatingDailySummary>();
-
-        const string sql = @"
-with src as (
-    select * from jsonb_to_recordset(@Rows::jsonb) as x(
-        acct        text,
-        gaming_dt   date,
-        point       numeric,
-        dollar      numeric,
-        comp        numeric,
-        ebonus      numeric,
-        mcomp       numeric,
-        theor_win   numeric,
-        casino_win  numeric,
-        bet         numeric,
-        plays       integer
+WITH src AS (
+    SELECT *
+    FROM jsonb_to_recordset(@Rows::jsonb) AS x(
+        rating_type         varchar(50),
+        tran_id             int8,
+        acct                varchar(50),
+        player_id           int8,
+        void_tran_id        int8,
+        gaming_dt           date,
+        post_dtm            timestamp,
+        modified_dtm        timestamp,
+        rating_start_dtm    timestamp,
+        rating_end_dtm      timestamp,
+        theor_win           numeric(19,4),
+        bet                 numeric(19,4),
+        casino_win          numeric(19,4),
+        point               numeric(19,9),
+        dollar              numeric(19,9),
+        comp                numeric(19,9),
+        ebonus              numeric(19,9),
+        mcomp               numeric(19,9),
+        card_tier           varchar(50),
+        casino_code         varchar(50),
+        dept_code           varchar(50),
+        game_code           varchar(50),
+        bet_type            varchar(50),
+        chip_set            varchar(200),
+        locn_code           varchar(200),
+        locn_info3          varchar(200),
+        locn_info4          varchar(200),
+        denom_code          varchar(50),
+        strat_id            int8,
+        strategy_code       varchar(50),
+        rating_category     varchar(200),
+        report_segment      varchar(200),
+        report_group        varchar(200),
+        report_area         varchar(200),
+        segment             varchar(200),
+        slot_location       varchar(200),
+        table_location      varchar(200),
+        is_void             bool,
+        st_rating_id        int8,
+        plays               float4,
+        game_id             varchar(40)
     )
 )
-insert into rating_daily_summary (
+INSERT INTO rating.earning_qualified_ratings (
+    rating_type,
+    tran_id,
     acct,
+    player_id,
+    void_tran_id,
     gaming_dt,
+    post_dtm,
+    modified_dtm,
+    rating_start_dtm,
+    rating_end_dtm,
+    theor_win,
+    bet,
+    casino_win,
     point,
     dollar,
     comp,
     ebonus,
     mcomp,
-    theor_win,
-    casino_win,
-    bet,
+    card_tier,
+    casino_code,
+    dept_code,
+    game_code,
+    bet_type,
+    chip_set,
+    locn_code,
+    locn_info3,
+    locn_info4,
+    denom_code,
+    strat_id,
+    strategy_code,
+    rating_category,
+    report_segment,
+    report_group,
+    report_area,
+    segment,
+    slot_location,
+    table_location,
+    is_void,
+    updated_at,
+    st_rating_id,
     plays,
-    updated_at
+    game_id
 )
-select
+SELECT
+    s.rating_type,
+    s.tran_id,
     s.acct,
+    s.player_id,
+    s.void_tran_id,
     s.gaming_dt,
+    s.post_dtm,
+    s.modified_dtm,
+    s.rating_start_dtm,
+    s.rating_end_dtm,
+    s.theor_win,
+    s.bet,
+    s.casino_win,
     s.point,
     s.dollar,
     s.comp,
     s.ebonus,
     s.mcomp,
-    s.theor_win,
-    s.casino_win,
-    s.bet,
+    s.card_tier,
+    s.casino_code,
+    s.dept_code,
+    s.game_code,
+    s.bet_type,
+    s.chip_set,
+    s.locn_code,
+    s.locn_info3,
+    s.locn_info4,
+    s.denom_code,
+    s.strat_id,
+    s.strategy_code,
+    s.rating_category,
+    s.report_segment,
+    s.report_group,
+    s.report_area,
+    s.segment,
+    s.slot_location,
+    s.table_location,
+    s.is_void,
+    now(),                 -- updated_at 在這裡統一塞 now()
+    s.st_rating_id,
     s.plays,
-    now()
-from src s
-on conflict (acct, gaming_dt)   -- 這裡用你實際的唯一鍵
-do update set
-    point       = excluded.point,
-    dollar      = excluded.dollar,
-    comp        = excluded.comp,
-    ebonus      = excluded.ebonus,
-    mcomp       = excluded.mcomp,
-    theor_win   = excluded.theor_win,
-    casino_win  = excluded.casino_win,
-    bet         = excluded.bet,
-    plays       = excluded.plays,
-    updated_at  = now()
-returning
+    s.game_id
+FROM src s
+ON CONFLICT (acct, gaming_dt, casino_code)      -- 依你實際 PK / unique key 修正
+DO UPDATE SET
+    rating_type      = EXCLUDED.rating_type,
+    tran_id          = EXCLUDED.tran_id,
+    player_id        = EXCLUDED.player_id,
+    void_tran_id     = EXCLUDED.void_tran_id,
+    post_dtm         = EXCLUDED.post_dtm,
+    modified_dtm     = EXCLUDED.modified_dtm,
+    rating_start_dtm = EXCLUDED.rating_start_dtm,
+    rating_end_dtm   = EXCLUDED.rating_end_dtm,
+    theor_win        = EXCLUDED.theor_win,
+    bet              = EXCLUDED.bet,
+    casino_win       = EXCLUDED.casino_win,
+    point            = EXCLUDED.point,
+    dollar           = EXCLUDED.dollar,
+    comp             = EXCLUDED.comp,
+    ebonus           = EXCLUDED.ebonus,
+    mcomp            = EXCLUDED.mcomp,
+    card_tier        = EXCLUDED.card_tier,
+    dept_code        = EXCLUDED.dept_code,
+    game_code        = EXCLUDED.game_code,
+    bet_type         = EXCLUDED.bet_type,
+    chip_set         = EXCLUDED.chip_set,
+    locn_code        = EXCLUDED.locn_code,
+    locn_info3       = EXCLUDED.locn_info3,
+    locn_info4       = EXCLUDED.locn_info4,
+    denom_code       = EXCLUDED.denom_code,
+    strat_id         = EXCLUDED.strat_id,
+    strategy_code    = EXCLUDED.strategy_code,
+    rating_category  = EXCLUDED.rating_category,
+    report_segment   = EXCLUDED.report_segment,
+    report_group     = EXCLUDED.report_group,
+    report_area      = EXCLUDED.report_area,
+    segment          = EXCLUDED.segment,
+    slot_location    = EXCLUDED.slot_location,
+    table_location   = EXCLUDED.table_location,
+    is_void          = EXCLUDED.is_void,
+    updated_at       = now(),
+    st_rating_id     = EXCLUDED.st_rating_id,
+    plays            = EXCLUDED.plays,
+    game_id          = EXCLUDED.game_id
+RETURNING
     acct,
     gaming_dt,
+    casino_code,
     point,
     dollar,
     comp,
@@ -88,32 +186,4 @@ returning
     casino_win,
     bet,
     plays,
-    (xmax = 0) as is_insert;
-";
-
-        // 用 JSON 一次把多筆帶進去
-        var rowsJson = JsonSerializer.Serialize(
-            ratingList.Select(r => new
-            {
-                r.Acct,
-                Gaming_Dt = r.GamingDt, // DateOnly 會被轉成 date，PG OK
-                r.Point,
-                r.Dollar,
-                r.Comp,
-                r.Ebonus,
-                r.Mcomp,
-                Theor_Win  = r.TheorWin,
-                Casino_Win = r.CasinoWin,
-                r.Bet,
-                r.Plays
-            }));
-
-        // Dapper 不支援 CancellationToken，NpgsqlCommand 才支援；
-        // 如果你真的要 token，可以自己建立 NpgsqlCommand。
-        var result = await dbConnection.QueryAsync<RatingDailySummary>(
-            sql,
-            new { Rows = rowsJson });
-
-        return result;
-    }
-}
+    (xmax = 0) AS is_insert;      -- true=insert, false=update
