@@ -1,20 +1,119 @@
-SELECT
-    schemaname,
-    relname        AS table_name,
-    indexrelname   AS index_name,
-    idx_scan,
-    idx_tup_read,
-    idx_tup_fetch,
-    pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
-    pg_get_indexdef(indexrelid)                  AS index_def
-FROM pg_stat_user_indexes
-JOIN pg_index USING (indexrelid)
-WHERE
-    idx_scan < 50                      -- 使用次数阈值，自行调整
-    AND pg_relation_size(indexrelid) > 8 * 1024 * 1024  -- 大于 8MB 的索引，避免关注太小的
-    AND NOT indisprimary              -- 排除主键索引
-    AND NOT indisunique               -- 排除 UNIQUE 索引
-    AND NOT indisexclusion            -- 排除排它约束索引
-ORDER BY
-    idx_scan ASC,
-    pg_relation_size(indexrelid) DESC;
+using System.Text.Json;
+using Dapper;
+using Npgsql; // 假設你用 PostgreSQL
+
+public class RatingRepository
+{
+    private readonly IDbConnection dbConnection;
+
+    public RatingRepository(IDbConnection dbConnection)
+    {
+        this.dbConnection = dbConnection;
+    }
+
+    public async Task<IEnumerable<RatingDailySummary>> WriteToDbAsync(
+        IEnumerable<QualifyingRating> ratings,
+        CancellationToken cancellationToken = default)
+    {
+        // ratings 可能是這一批 message 裡的多筆
+        var ratingList = ratings.ToList();
+        if (ratingList.Count == 0)
+            return Array.Empty<RatingDailySummary>();
+
+        const string sql = @"
+with src as (
+    select * from jsonb_to_recordset(@Rows::jsonb) as x(
+        acct        text,
+        gaming_dt   date,
+        point       numeric,
+        dollar      numeric,
+        comp        numeric,
+        ebonus      numeric,
+        mcomp       numeric,
+        theor_win   numeric,
+        casino_win  numeric,
+        bet         numeric,
+        plays       integer
+    )
+)
+insert into rating_daily_summary (
+    acct,
+    gaming_dt,
+    point,
+    dollar,
+    comp,
+    ebonus,
+    mcomp,
+    theor_win,
+    casino_win,
+    bet,
+    plays,
+    updated_at
+)
+select
+    s.acct,
+    s.gaming_dt,
+    s.point,
+    s.dollar,
+    s.comp,
+    s.ebonus,
+    s.mcomp,
+    s.theor_win,
+    s.casino_win,
+    s.bet,
+    s.plays,
+    now()
+from src s
+on conflict (acct, gaming_dt)   -- 這裡用你實際的唯一鍵
+do update set
+    point       = excluded.point,
+    dollar      = excluded.dollar,
+    comp        = excluded.comp,
+    ebonus      = excluded.ebonus,
+    mcomp       = excluded.mcomp,
+    theor_win   = excluded.theor_win,
+    casino_win  = excluded.casino_win,
+    bet         = excluded.bet,
+    plays       = excluded.plays,
+    updated_at  = now()
+returning
+    acct,
+    gaming_dt,
+    point,
+    dollar,
+    comp,
+    ebonus,
+    mcomp,
+    theor_win,
+    casino_win,
+    bet,
+    plays,
+    (xmax = 0) as is_insert;
+";
+
+        // 用 JSON 一次把多筆帶進去
+        var rowsJson = JsonSerializer.Serialize(
+            ratingList.Select(r => new
+            {
+                r.Acct,
+                Gaming_Dt = r.GamingDt, // DateOnly 會被轉成 date，PG OK
+                r.Point,
+                r.Dollar,
+                r.Comp,
+                r.Ebonus,
+                r.Mcomp,
+                Theor_Win  = r.TheorWin,
+                Casino_Win = r.CasinoWin,
+                r.Bet,
+                r.Plays
+            }));
+
+        // Dapper 不支援 CancellationToken，NpgsqlCommand 才支援；
+        // 如果你真的要 token，可以自己建立 NpgsqlCommand。
+        var result = await dbConnection.QueryAsync<RatingDailySummary>(
+            sql,
+            new { Rows = rowsJson });
+
+        return result;
+    }
+}
