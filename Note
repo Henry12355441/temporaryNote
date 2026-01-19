@@ -1,189 +1,210 @@
-WITH src AS (
-    SELECT *
-    FROM jsonb_to_recordset(@Rows::jsonb) AS x(
-        rating_type         varchar(50),
-        tran_id             int8,
-        acct                varchar(50),
-        player_id           int8,
-        void_tran_id        int8,
-        gaming_dt           date,
-        post_dtm            timestamp,
-        modified_dtm        timestamp,
-        rating_start_dtm    timestamp,
-        rating_end_dtm      timestamp,
-        theor_win           numeric(19,4),
-        bet                 numeric(19,4),
-        casino_win          numeric(19,4),
-        point               numeric(19,9),
-        dollar              numeric(19,9),
-        comp                numeric(19,9),
-        ebonus              numeric(19,9),
-        mcomp               numeric(19,9),
-        card_tier           varchar(50),
-        casino_code         varchar(50),
-        dept_code           varchar(50),
-        game_code           varchar(50),
-        bet_type            varchar(50),
-        chip_set            varchar(200),
-        locn_code           varchar(200),
-        locn_info3          varchar(200),
-        locn_info4          varchar(200),
-        denom_code          varchar(50),
-        strat_id            int8,
-        strategy_code       varchar(50),
-        rating_category     varchar(200),
-        report_segment      varchar(200),
-        report_group        varchar(200),
-        report_area         varchar(200),
-        segment             varchar(200),
-        slot_location       varchar(200),
-        table_location      varchar(200),
-        is_void             bool,
-        st_rating_id        int8,
-        plays               float4,
-        game_id             varchar(40)
-    )
-)
-INSERT INTO rating.earning_qualified_ratings (
-    rating_type,
-    tran_id,
-    acct,
-    player_id,
-    void_tran_id,
-    gaming_dt,
-    post_dtm,
-    modified_dtm,
-    rating_start_dtm,
-    rating_end_dtm,
-    theor_win,
-    bet,
-    casino_win,
-    point,
-    dollar,
-    comp,
-    ebonus,
-    mcomp,
-    card_tier,
-    casino_code,
-    dept_code,
-    game_code,
-    bet_type,
-    chip_set,
-    locn_code,
-    locn_info3,
-    locn_info4,
-    denom_code,
-    strat_id,
-    strategy_code,
-    rating_category,
-    report_segment,
-    report_group,
-    report_area,
-    segment,
-    slot_location,
-    table_location,
-    is_void,
-    updated_at,
-    st_rating_id,
-    plays,
-    game_id
-)
-SELECT
-    s.rating_type,
-    s.tran_id,
-    s.acct,
-    s.player_id,
-    s.void_tran_id,
-    s.gaming_dt,
-    s.post_dtm,
-    s.modified_dtm,
-    s.rating_start_dtm,
-    s.rating_end_dtm,
-    s.theor_win,
-    s.bet,
-    s.casino_win,
-    s.point,
-    s.dollar,
-    s.comp,
-    s.ebonus,
-    s.mcomp,
-    s.card_tier,
-    s.casino_code,
-    s.dept_code,
-    s.game_code,
-    s.bet_type,
-    s.chip_set,
-    s.locn_code,
-    s.locn_info3,
-    s.locn_info4,
-    s.denom_code,
-    s.strat_id,
-    s.strategy_code,
-    s.rating_category,
-    s.report_segment,
-    s.report_group,
-    s.report_area,
-    s.segment,
-    s.slot_location,
-    s.table_location,
-    s.is_void,
-    now(),                 -- updated_at 在這裡統一塞 now()
-    s.st_rating_id,
-    s.plays,
-    s.game_id
-FROM src s
-ON CONFLICT (acct, gaming_dt, casino_code)      -- 依你實際 PK / unique key 修正
-DO UPDATE SET
-    rating_type      = EXCLUDED.rating_type,
-    tran_id          = EXCLUDED.tran_id,
-    player_id        = EXCLUDED.player_id,
-    void_tran_id     = EXCLUDED.void_tran_id,
-    post_dtm         = EXCLUDED.post_dtm,
-    modified_dtm     = EXCLUDED.modified_dtm,
-    rating_start_dtm = EXCLUDED.rating_start_dtm,
-    rating_end_dtm   = EXCLUDED.rating_end_dtm,
-    theor_win        = EXCLUDED.theor_win,
-    bet              = EXCLUDED.bet,
-    casino_win       = EXCLUDED.casino_win,
-    point            = EXCLUDED.point,
-    dollar           = EXCLUDED.dollar,
-    comp             = EXCLUDED.comp,
-    ebonus           = EXCLUDED.ebonus,
-    mcomp            = EXCLUDED.mcomp,
-    card_tier        = EXCLUDED.card_tier,
-    dept_code        = EXCLUDED.dept_code,
-    game_code        = EXCLUDED.game_code,
-    bet_type         = EXCLUDED.bet_type,
-    chip_set         = EXCLUDED.chip_set,
-    locn_code        = EXCLUDED.locn_code,
-    locn_info3       = EXCLUDED.locn_info3,
-    locn_info4       = EXCLUDED.locn_info4,
-    denom_code       = EXCLUDED.denom_code,
-    strat_id         = EXCLUDED.strat_id,
-    strategy_code    = EXCLUDED.strategy_code,
-    rating_category  = EXCLUDED.rating_category,
-    report_segment   = EXCLUDED.report_segment,
-    report_group     = EXCLUDED.report_group,
-    report_area      = EXCLUDED.report_area,
-    segment          = EXCLUDED.segment,
-    slot_location    = EXCLUDED.slot_location,
-    table_location   = EXCLUDED.table_location,
-    is_void          = EXCLUDED.is_void,
-    updated_at       = now(),
-    st_rating_id     = EXCLUDED.st_rating_id,
-    plays            = EXCLUDED.plays,
-    game_id          = EXCLUDED.game_id
-RETURNING
-    acct,
-    gaming_dt,
-    casino_code,
-    point,
-    dollar,
-    comp,
-    ebonus,
-    mcomp,
-    theor_win,
-    casino_win,
-    bet,
-    plays,
-    (xmax = 0) AS is_insert;      -- true=insert, false=update
+如果你的 `WithScore` 等方法內部需要依賴 **DI (Dependency Injection)** 的 Singleton Service（例如：需要查資料庫驗證分數是否合法，或需要調用配置服務來獲取評分權重），那麼單純的 `new Builder()` 就行不通了，因為 Builder 自己無法獲取這些 Service。
+
+在 C# (特別是 ASP.NET Core 或現代 .NET 應用) 中，處理這種「Builder 需要依賴注入」的情況，通常有兩種最佳實踐。
+
+### 核心問題
+Builder 通常是短暫存在的物件（Transient），而 Service 是長期存在的（Singleton/Scoped）。我們不能讓 Builder 自己去 `new Service()`，也不能讓使用者手動傳入 Service（那樣太醜了）。
+
+---
+
+### 方案一：由 Factory 負責注入 (最推薦)
+這是最乾淨的作法。使用者不直接 `new Builder`，而是通過一個 `RatingBuilderFactory` 來獲取 Builder。這個 Factory 會從 DI 容器中獲取必要的 Service，然後塞給 Builder。
+
+#### 1. 定義 Service 和 Builder
+```csharp
+// 模擬一個 Singleton Service
+public interface IScoringRuleService
+{
+    bool ValidateScore(string type, double score);
+    double CalculateWeight(string type, double score);
+}
+
+public class ScoringRuleService : IScoringRuleService
+{
+    public bool ValidateScore(string type, double score) 
+    {
+        Console.WriteLine($"[Service] Validating {type} score: {score}...");
+        return score >= 0; // 簡單邏輯
+    }
+
+    public double CalculateWeight(string type, double score)
+    {
+        Console.WriteLine($"[Service] Calculating weight for {type}...");
+        return score * 1.0; 
+    }
+}
+
+// 抽象 Builder，接收 Service
+public abstract class RatingBuilder
+{
+    protected readonly IScoringRuleService _ruleService;
+    protected Rating _rating = new Rating();
+
+    // 透過建構子強制注入 Service
+    protected RatingBuilder(IScoringRuleService ruleService)
+    {
+        _ruleService = ruleService;
+    }
+
+    public abstract RatingBuilder WithScore(double score);
+    
+    public RatingBuilder WithComment(string comment)
+    {
+        _rating.Comment = comment;
+        return this;
+    }
+
+    public Rating Build() => _rating;
+}
+
+// 具體 Builder：Star
+public class StarRatingBuilder : RatingBuilder
+{
+    public StarRatingBuilder(IScoringRuleService ruleService) : base(ruleService) 
+    {
+        _rating.Type = "Star";
+    }
+
+    public override RatingBuilder WithScore(double score)
+    {
+        // 使用注入的 Service 進行邏輯判斷
+        if (!_ruleService.ValidateScore("Star", score)) 
+            throw new ArgumentException("Invalid score");
+
+        _rating.FinalScore = _ruleService.CalculateWeight("Star", score);
+        return this;
+    }
+}
+
+// 具體 Builder：Percentage
+public class PercentageRatingBuilder : RatingBuilder
+{
+    public PercentageRatingBuilder(IScoringRuleService ruleService) : base(ruleService) 
+    {
+        _rating.Type = "Percentage";
+    }
+
+    public override RatingBuilder WithScore(double score)
+    {
+        // 使用注入的 Service
+        var normalized = score / 20.0; 
+        _rating.FinalScore = _ruleService.CalculateWeight("Percentage", normalized);
+        return this;
+    }
+}
+```
+
+#### 2. 定義 Factory (工廠)
+Factory 註冊為 Singleton 或 Scoped，它負責「組裝」Builder。
+
+```csharp
+public interface IRatingBuilderFactory
+{
+    RatingBuilder Create(string type);
+}
+
+public class RatingBuilderFactory : IRatingBuilderFactory
+{
+    private readonly IScoringRuleService _ruleService;
+
+    // Factory 本身由 DI 容器創建，所以可以拿到 Service
+    public RatingBuilderFactory(IScoringRuleService ruleService)
+    {
+        _ruleService = ruleService;
+    }
+
+    public RatingBuilder Create(string type)
+    {
+        return type switch
+        {
+            "Star" => new StarRatingBuilder(_ruleService),
+            "Percentage" => new PercentageRatingBuilder(_ruleService),
+            _ => throw new ArgumentException("Unknown type")
+        };
+    }
+}
+```
+
+#### 3. 在 DI 容器中註冊並使用
+```csharp
+// Startup.cs 或 Program.cs
+services.AddSingleton<IScoringRuleService, ScoringRuleService>();
+services.AddSingleton<IRatingBuilderFactory, RatingBuilderFactory>();
+
+// 在你的 Controller 或 Business Logic 中使用
+public class RatingController
+{
+    private readonly IRatingBuilderFactory _factory;
+
+    public RatingController(IRatingBuilderFactory factory)
+    {
+        _factory = factory;
+    }
+
+    public void CreateRating()
+    {
+        // 這裡非常乾淨，使用者完全不知道背後有 Service 參與
+        var rating = _factory.Create("Star")
+            .WithScore(4.5)
+            .WithComment("Excellent service")
+            .Build();
+    }
+}
+```
+
+---
+
+### 方案二：方法注入 (Method Injection)
+如果你不想寫 Factory，或者 Service 只有在 `WithScore` 那一刻才需要，可以直接在方法參數中傳入 Service。但這通常**不推薦**，因為這會汙染 Builder 的 API，讓調用者（使用者）必須知道要傳哪個 Service 進去。
+
+```csharp
+// 不推薦：使用者必須手動傳入 service
+builder.WithScore(4.5, _scoringService); 
+```
+
+---
+
+### 方案三：Func/Delegate 延遲注入 (適合輕量級場景)
+如果你不想寫完整的 Factory 類別，可以在 DI 設定時直接註冊一個 `Func`。
+
+```csharp
+// 在 Startup.cs
+services.AddTransient<StarRatingBuilder>();
+services.AddTransient<PercentageRatingBuilder>();
+
+// 註冊一個工廠委派
+services.AddSingleton<Func<string, RatingBuilder>>(provider => key =>
+{
+    return key switch
+    {
+        "Star" => provider.GetRequiredService<StarRatingBuilder>(),
+        "Percentage" => provider.GetRequiredService<PercentageRatingBuilder>(),
+        _ => throw new ArgumentException()
+    };
+});
+
+// 使用時
+public class MyService
+{
+    private readonly Func<string, RatingBuilder> _builderFactory;
+
+    public MyService(Func<string, RatingBuilder> builderFactory)
+    {
+        _builderFactory = builderFactory;
+    }
+
+    public void DoWork()
+    {
+        var builder = _builderFactory("Star"); // 自動注入了所有依賴
+        builder.WithScore(5).Build();
+    }
+}
+```
+
+### 總結建議
+
+既然你的 `WithScore` 邏輯依賴於 Singleton Service，**方案一 (Factory Pattern)** 是最標準且維護性最高的選擇。
+
+1.  **關注點分離**：Builder 專注於構建邏輯，Service 專注於業務規則，Factory 專注於依賴組裝。
+2.  **測試容易**：你可以輕鬆 Mock `IScoringRuleService` 來測試 Builder。
+3.  **API 乾淨**：使用者調用時只需要 `_factory.Create("Star").WithScore(5)`，完全不需要關心背後複雜的 Service 依賴。
