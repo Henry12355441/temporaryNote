@@ -1,210 +1,140 @@
-如果你的 `WithScore` 等方法內部需要依賴 **DI (Dependency Injection)** 的 Singleton Service（例如：需要查資料庫驗證分數是否合法，或需要調用配置服務來獲取評分權重），那麼單純的 `new Builder()` 就行不通了，因為 Builder 自己無法獲取這些 Service。
+*Thinking...*
 
-在 C# (特別是 ASP.NET Core 或現代 .NET 應用) 中，處理這種「Builder 需要依賴注入」的情況，通常有兩種最佳實踐。
+> **Investigating Snowflake IDs**
+> 
+> I'm currently focused on the user's core request: can a public library be used for Snowflake ID generation, specifically, wanting to pass in the `workerId` directly? I am beginning to break down the user's needs to see what they require.
+> 
+> 
+> **Clarifying the Core Need**
+> 
+> I've been drilling down on the user's primary concern: a library-based Snowflake ID generator, accepting only the `workerId`. The user seems less interested in the underlying mechanics and more in ease of use. I'm focusing on simplicity, given the explicit requirement.
+> 
+> 
+当然可以！使用成熟的开源库是最佳实践，既能避免自己写位运算出错，又能直接享受到高性能和线程安全的实现。
 
-### 核心問題
-Builder 通常是短暫存在的物件（Transient），而 Service 是長期存在的（Singleton/Scoped）。我們不能讓 Builder 自己去 `new Service()`，也不能讓使用者手動傳入 Service（那樣太醜了）。
+在 .NET (C#) 生态中，最流行且久经考验的库是 **IdGen**。
 
----
+### 推荐库：IdGen
 
-### 方案一：由 Factory 負責注入 (最推薦)
-這是最乾淨的作法。使用者不直接 `new Builder`，而是通過一個 `RatingBuilderFactory` 來獲取 Builder。這個 Factory 會從 DI 容器中獲取必要的 Service，然後塞給 Builder。
+*   **GitHub**: [https://github.com/RobThree/IdGen](https://github.com/RobThree/IdGen)
+*   **NuGet**: `Install-Package IdGen`
 
-#### 1. 定義 Service 和 Builder
+它完全符合您的要求：**您只需要在初始化时传入 `WorkerId`（它称为 GeneratorId），剩下的它全包了。**
+
+### 代码示例
+
+以下是一个完整的、可以直接使用的单例服务封装。
+
+#### 1. 安装 NuGet 包
+```bash
+dotnet add package IdGen
+```
+
+#### 2. 编写一个 ID 生成服务 (SnowflakeService.cs)
+
+这个服务会在启动时确定 `WorkerId`（结合我们之前讨论的逻辑），然后初始化 `IdGen`。
+
 ```csharp
-// 模擬一個 Singleton Service
-public interface IScoringRuleService
+using IdGen;
+using System;
+
+public interface ISnowflakeService
 {
-    bool ValidateScore(string type, double score);
-    double CalculateWeight(string type, double score);
+    long NextId();
 }
 
-public class ScoringRuleService : IScoringRuleService
+public class SnowflakeService : ISnowflakeService
 {
-    public bool ValidateScore(string type, double score) 
+    private readonly IdGenerator _generator;
+
+    // 构造函数注入 workerId
+    // 在实际项目中，这个 workerId 应该是在 Program.cs 里通过 DB 或 Redis 算好后传进来的
+    public SnowflakeService(int workerId)
     {
-        Console.WriteLine($"[Service] Validating {type} score: {score}...");
-        return score >= 0; // 簡單邏輯
+        // 1. 配置 IdGen
+        // 默认配置结构：
+        // 41位 时间戳
+        // 10位 GeneratorId (就是 WorkerId，范围 0-1023)
+        // 12位 序列号 (每毫秒支持生成 4096 个 ID)
+        var structure = new IdStructure(41, 10, 12);
+        
+        // 2. 准备选项
+        // 使用默认的 2015-01-01 作为纪元时间 (Epoch)，你可以修改成项目开始的时间
+        var options = new IdGeneratorOptions(structure, new DefaultTimeSource(new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+
+        // 3. 初始化生成器
+        _generator = new IdGenerator(workerId, options);
     }
 
-    public double CalculateWeight(string type, double score)
+    public long NextId()
     {
-        Console.WriteLine($"[Service] Calculating weight for {type}...");
-        return score * 1.0; 
+        // 直接调用库的方法，不用管任何位运算
+        return _generator.CreateId();
     }
 }
+```
 
-// 抽象 Builder，接收 Service
-public abstract class RatingBuilder
+#### 3. 在 Program.cs 中注册 (依赖注入)
+
+这里结合了之前讨论的“从数据库获取 WorkerId”的逻辑，确保 ID 安全。
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Npgsql;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// --- 关键步骤：在应用启动前，先计算出 WorkerId ---
+int workerId = 0;
+
+// 模拟从数据库获取 WorkerId 的过程 (同步执行，因为没有 ID 服务起不来)
+// 实际代码请换成您的 GetWorkerIdFromDbAsync 逻辑
+try 
 {
-    protected readonly IScoringRuleService _ruleService;
-    protected Rating _rating = new Rating();
-
-    // 透過建構子強制注入 Service
-    protected RatingBuilder(IScoringRuleService ruleService)
-    {
-        _ruleService = ruleService;
-    }
-
-    public abstract RatingBuilder WithScore(double score);
+    // 假设这是您的连接字符串
+    string connString = builder.Configuration.GetConnectionString("DefaultConnection");
     
-    public RatingBuilder WithComment(string comment)
-    {
-        _rating.Comment = comment;
-        return this;
-    }
-
-    public Rating Build() => _rating;
+    // 这里简单模拟，实际请调用数据库
+    // workerId = GetWorkerIdFromPostgres(connString, "my-app-name"); 
+    workerId = 1; // 假装我们从 DB 拿到了 1
+    
+    Console.WriteLine($"[Init] Assigned WorkerId: {workerId}");
+}
+catch (Exception ex)
+{
+    // 如果拿不到 WorkerId，直接让程序崩溃，不要带病运行
+    throw new Exception("Failed to initialize WorkerId from DB", ex);
 }
 
-// 具體 Builder：Star
-public class StarRatingBuilder : RatingBuilder
+// --- 注册单例服务 ---
+// 将算好的 workerId 传给服务
+builder.Services.AddSingleton<ISnowflakeService>(new SnowflakeService(workerId));
+
+var app = builder.Build();
+
+app.MapGet("/id", (ISnowflakeService snowflake) => 
 {
-    public StarRatingBuilder(IScoringRuleService ruleService) : base(ruleService) 
-    {
-        _rating.Type = "Star";
-    }
-
-    public override RatingBuilder WithScore(double score)
-    {
-        // 使用注入的 Service 進行邏輯判斷
-        if (!_ruleService.ValidateScore("Star", score)) 
-            throw new ArgumentException("Invalid score");
-
-        _rating.FinalScore = _ruleService.CalculateWeight("Star", score);
-        return this;
-    }
-}
-
-// 具體 Builder：Percentage
-public class PercentageRatingBuilder : RatingBuilder
-{
-    public PercentageRatingBuilder(IScoringRuleService ruleService) : base(ruleService) 
-    {
-        _rating.Type = "Percentage";
-    }
-
-    public override RatingBuilder WithScore(double score)
-    {
-        // 使用注入的 Service
-        var normalized = score / 20.0; 
-        _rating.FinalScore = _ruleService.CalculateWeight("Percentage", normalized);
-        return this;
-    }
-}
-```
-
-#### 2. 定義 Factory (工廠)
-Factory 註冊為 Singleton 或 Scoped，它負責「組裝」Builder。
-
-```csharp
-public interface IRatingBuilderFactory
-{
-    RatingBuilder Create(string type);
-}
-
-public class RatingBuilderFactory : IRatingBuilderFactory
-{
-    private readonly IScoringRuleService _ruleService;
-
-    // Factory 本身由 DI 容器創建，所以可以拿到 Service
-    public RatingBuilderFactory(IScoringRuleService ruleService)
-    {
-        _ruleService = ruleService;
-    }
-
-    public RatingBuilder Create(string type)
-    {
-        return type switch
-        {
-            "Star" => new StarRatingBuilder(_ruleService),
-            "Percentage" => new PercentageRatingBuilder(_ruleService),
-            _ => throw new ArgumentException("Unknown type")
-        };
-    }
-}
-```
-
-#### 3. 在 DI 容器中註冊並使用
-```csharp
-// Startup.cs 或 Program.cs
-services.AddSingleton<IScoringRuleService, ScoringRuleService>();
-services.AddSingleton<IRatingBuilderFactory, RatingBuilderFactory>();
-
-// 在你的 Controller 或 Business Logic 中使用
-public class RatingController
-{
-    private readonly IRatingBuilderFactory _factory;
-
-    public RatingController(IRatingBuilderFactory factory)
-    {
-        _factory = factory;
-    }
-
-    public void CreateRating()
-    {
-        // 這裡非常乾淨，使用者完全不知道背後有 Service 參與
-        var rating = _factory.Create("Star")
-            .WithScore(4.5)
-            .WithComment("Excellent service")
-            .Build();
-    }
-}
-```
-
----
-
-### 方案二：方法注入 (Method Injection)
-如果你不想寫 Factory，或者 Service 只有在 `WithScore` 那一刻才需要，可以直接在方法參數中傳入 Service。但這通常**不推薦**，因為這會汙染 Builder 的 API，讓調用者（使用者）必須知道要傳哪個 Service 進去。
-
-```csharp
-// 不推薦：使用者必須手動傳入 service
-builder.WithScore(4.5, _scoringService); 
-```
-
----
-
-### 方案三：Func/Delegate 延遲注入 (適合輕量級場景)
-如果你不想寫完整的 Factory 類別，可以在 DI 設定時直接註冊一個 `Func`。
-
-```csharp
-// 在 Startup.cs
-services.AddTransient<StarRatingBuilder>();
-services.AddTransient<PercentageRatingBuilder>();
-
-// 註冊一個工廠委派
-services.AddSingleton<Func<string, RatingBuilder>>(provider => key =>
-{
-    return key switch
-    {
-        "Star" => provider.GetRequiredService<StarRatingBuilder>(),
-        "Percentage" => provider.GetRequiredService<PercentageRatingBuilder>(),
-        _ => throw new ArgumentException()
-    };
+    return snowflake.NextId();
 });
 
-// 使用時
-public class MyService
-{
-    private readonly Func<string, RatingBuilder> _builderFactory;
-
-    public MyService(Func<string, RatingBuilder> builderFactory)
-    {
-        _builderFactory = builderFactory;
-    }
-
-    public void DoWork()
-    {
-        var builder = _builderFactory("Star"); // 自動注入了所有依賴
-        builder.WithScore(5).Build();
-    }
-}
+app.Run();
 ```
 
-### 總結建議
+### 为什么推荐 IdGen？
 
-既然你的 `WithScore` 邏輯依賴於 Singleton Service，**方案一 (Factory Pattern)** 是最標準且維護性最高的選擇。
+1.  **傻瓜式使用**：如您所愿，`new IdGenerator(workerId)` 即可，不用关心位移。
+2.  **处理了“时钟回拨”**：如果服务器时间突然回调（NTP同步导致），自己写的代码很容易产生重复 ID，而 `IdGen` 内部有机制会抛出异常或等待，防止生成重复 ID。
+3.  **高性能**：它是无锁设计或使用了高效的自旋锁，每秒可以生成数百万个 ID。
+4.  **可配置**：如果未来您觉得 1024 个 Worker 太多了，想把位数留给序列号，它可以很方便地调整 `IdStructure`。
 
-1.  **關注點分離**：Builder 專注於構建邏輯，Service 專注於業務規則，Factory 專注於依賴組裝。
-2.  **測試容易**：你可以輕鬆 Mock `IScoringRuleService` 來測試 Builder。
-3.  **API 乾淨**：使用者調用時只需要 `_factory.Create("Star").WithScore(5)`，完全不需要關心背後複雜的 Service 依賴。
+### 总结
+
+是的，**不要自己造轮子**。
+
+1.  引入 `IdGen` 库。
+2.  写一段代码从 DB/Redis 获取一个唯一的 `int` (0-1023)。
+3.  把这个 `int` 丢给 `IdGen` 的构造函数。
+4.  调用 `.CreateId()`。
+
+搞定！
