@@ -1,76 +1,66 @@
 *Thinking...*
 
-> **Mapping the Data**
+> **Defining the Approach**
 > 
-> I'm currently focused on the user's request, specifically how to take the database's `bet_type` values and transform them into a C# Enum. The goal is clear, and I've started breaking down the input data to identify the necessary steps. This involves understanding the `bet_type` column's values.
-> 
-> 
-> **Decoding the Input Data**
-> 
-> I'm now carefully examining the discrepancies between the database strings (e.g., "PLAYER_PAIR") and the C# enum members (e.g., `BetType.PlayerPair`). It's clear that simple string matching won't work due to the case and format differences. I'm considering the best strategy to reconcile these differences to achieve a reliable conversion.
+> I'm currently focused on how to best translate the user's need. I'm starting by dissecting the request. My initial goal is to understand how to move a string value for `bet_type` into a `BetType` enum within C# using Dapper. The user's preferences will influence the specific method I choose to implement.
 > 
 > 
-> **Devising a Conversion Strategy**
+> **Refining the Solution**
 > 
-> The core of the problem is now crystal clear. I'm focusing on the conversion from the database string values to their corresponding enum members. The naming and casing discrepancies are the main obstacle. I'm prioritizing Dapper-friendly solutions, specifically exploring the potential of a custom TypeHandler or implementing a manual conversion within the DTO/model. I am trying to determine the best balance between simplicity and maintainability, so I'm evaluating the pros and cons of each approach.
-> 
-> 
-> **Prioritizing a Solution**
-> 
-> I've evaluated the various approaches to address the mapping problem. Given the constraints and the user's Dapper usage, a custom `TypeHandler` appears to be the most maintainable and efficient approach. I'm now drafting the implementation details, focusing on how the handler will convert the database strings (e.g., "PLAYER_PAIR") to the corresponding enum values (`BetType.PlayerPair`). I'm also considering potential error handling scenarios.
+> I'm now zeroing in on the implementation. The plan is to create a Dapper `TypeHandler` with a `Parse` method that can handle various string formats from the database, specifically both snake_case and PascalCase. I'll prioritize direct enum matching, then try matching after removing underscores. Handling potential nulls is crucial.
 > 
 > 
-> **Choosing the Best Path**
+> **Streamlining the Parse Method**
 > 
-> I'm now fully committed to the Dapper `TypeHandler` approach, as it offers the best balance of maintainability and performance. My next task is to write the code that converts between the database string values (like "PLAYER_PAIR") and the C# `BetType` enum values (like `BetType.PlayerPair`). I'm focusing on handling different naming styles between the DB and the C# side.
-> 
-> 
-> **Refining the Approach**
-> 
-> I'm now fully immersed in developing the `TypeHandler`. I've started writing the core conversion logic, ensuring it addresses the case and naming differences between the database strings (e.g., "PLAYER_PAIR") and the C# enum (e.g., `BetType.PlayerPair`). I am also taking extra care to handle potential errors and edge cases to make sure it handles all possible inputs.
+> My current focus is on streamlining the `Parse` method's implementation. The `Enum.TryParse` method, with its case-insensitive feature, is proving to be more robust than initially anticipated. I'm leaning toward a simpler structure, minimizing the code's complexity while addressing the user's requirements for handling diverse string formats from the database. This approach should cover both formats the user specified.
 > 
 > 
-> **Crafting the TypeHandler**
+> **Finalizing the Strategy**
 > 
-> I am now focusing on the core of my proposed solution. I'm building out the `TypeHandler` class to manage the conversion. I'm writing the `Parse` method to take a database string and correctly convert it to the corresponding enum value, addressing the case and underscore differences encountered in the data. I'm also thinking about the details of how this `TypeHandler` will be registered with Dapper to ensure proper application across the codebase.
+> I've significantly streamlined the parsing logic. The `Enum.TryParse` method, combined with case-insensitive comparisons and underscore removal, elegantly addresses both requested formats. My focus now is on incorporating the `SetValue` functionality for writing to the database, considering the existing data format in the database. I will favor snake_case.
 > 
 > 
-從你的截圖來看，你遇到的情況是：
+> **Consolidating the Approach**
+> 
+> Now I'm focusing on the `SetValue` implementation within the `TypeHandler`. Given the existing mix of formats in the database, writing consistently is the next hurdle. I lean toward writing in snake_case, aligning with the observed database style, but I'll add a comment in my response suggesting the user consider a custom approach if they need a specific format during database writes.
+> 
+> 
+> **Consolidating the Logic**
+> 
+> I've significantly refined the parsing strategy. A single pass using `Enum.TryParse`, after removing underscores and case-insensitive comparison, addresses both specified string formats with exceptional elegance. The plan includes the `SetValue` function. I'll utilize `ToString()` by default for `SetValue`, because of potential database format variation. I will also incorporate comments, guiding the user towards customization if specific writing formatting is necessary.
+> 
+> 
+沒問題，這是一個非常實際的需求。資料庫裡的歷史資料格式不一致（有些是 `SNAKE_CASE`，有些是 `PascalCase`）是很常見的情況。
 
-1.  **資料庫 (DB)**: `bet_type` 欄位存的是 **字串 (String)**，格式是全大寫且帶底線 (Snake Case)，例如 `PLAYER_PAIR`, `SMALL_TIGER`。
-2.  **C# Enum**: `BetType` 定義的是 **PascalCase**，例如 `PlayerPair`, `SmallTiger`。
-3.  **ORM**: 你使用的是 **Dapper** (`dbConnection.QueryAsync`) 搭配 **Npgsql** (PostgreSQL)。
+我們可以優化 `TypeHandler` 的邏輯：**先嘗試直接轉換，如果失敗，再嘗試移除底線後轉換**。或者更簡單一點，因為移除底線對於原本就沒有底線的字串（如 `BankerPair`）沒有影響，我們可以統一先移除底線，再進行忽略大小寫的比對。
 
-因為 Dapper 預設在映射 Enum 時，會嘗試比對名字 (Case-insensitive) 或數值。但 `PLAYER_PAIR` (有底線) 和 `PlayerPair` (無底線) 字串不匹配，所以直接 Query 會報錯或變成預設值。
+以下是支援這兩種格式（`BANKER_PAIR` 和 `BankerPair`）的完整程式碼：
 
-這裡有三種解決方案，按推薦程度排序：
-
-### 方法一：使用 Dapper 的 TypeHandler (最推薦，最乾淨)
-
-這是最正規的做法。你可以寫一個轉換器，告訴 Dapper 當遇到 `BetType` 時，該如何把 DB 的字串轉成 Enum。
-
-**1. 建立一個 TypeHandler 類別：**
+### 1. 改良版的 TypeHandler
 
 ```csharp
 using Dapper;
 using System;
 using System.Data;
-using Galaxy.SmartTable.Integration.Common.Enums; // 你的 Enum namespace
+using Galaxy.SmartTable.Integration.Common.Enums; // 請替換成你實際的 namespace
 
 public class BetTypeHandler : SqlMapper.TypeHandler<BetType>
 {
-    // 從 DB 讀取資料轉成 C# Enum
     public override BetType Parse(object value)
     {
+        // 1. 處理 Null 情況
         if (value == null || value is DBNull)
         {
-            return BetType.Manual; // 設定一個預設值
+            return BetType.Manual; // 或是你的預設值
         }
 
         string dbValue = value.ToString();
 
-        // 關鍵步驟：移除底線並忽略大小寫來進行比對
-        // 例如: "PLAYER_PAIR" -> "PLAYERPAIR" -> 對應 Enum 的 PlayerPair
+        // 2. 核心邏輯：統一移除底線並忽略大小寫
+        // 情況 A: DB是 "BANKER_PAIR" -> 移除底線變 "BANKERPAIR" -> 忽略大小寫比對 -> 成功對應 Enum 的 BankerPair
+        // 情況 B: DB是 "BankerPair"  -> 移除底線變 "BankerPair" -> 忽略大小寫比對 -> 成功對應 Enum 的 BankerPair
+        // 情況 C: DB是 "TIE"         -> 移除底線變 "TIE"        -> 忽略大小寫比對 -> 成功對應 Enum 的 Tie
+        
         string cleanValue = dbValue.Replace("_", "");
 
         if (Enum.TryParse(typeof(BetType), cleanValue, true, out var result))
@@ -78,103 +68,41 @@ public class BetTypeHandler : SqlMapper.TypeHandler<BetType>
             return (BetType)result;
         }
 
-        // 如果對應不到，回傳預設值
+        // 3. 如果真的對應不到 (例如 DB 存了 "UnknownType")，回傳預設值
         return BetType.Manual;
     }
 
-    // 從 C# Enum 寫入到 DB (如果你有 Insert/Update 需求)
     public override void SetValue(IDbDataParameter parameter, BetType value)
     {
-        // 這裡看你的需求，如果要存回 "PLAYER_PAIR"，你需要寫邏輯把 PlayerPair 轉回 PLAYER_PAIR
-        // 簡單的做法是轉大寫，但如果有底線需求，可能需要額外處理
-        // 這裡示範簡單轉字串
-        parameter.Value = value.ToString().ToUpper(); 
+        // 寫入 DB 的邏輯
+        // 這裡看你的規範，通常建議統一格式寫入。
+        // 如果你想存成 "BANKER_PAIR" 這種格式，你需要寫一個轉換函式。
+        // 如果只是存 "BankerPair"，直接 ToString() 即可。
+        
+        parameter.Value = value.ToString(); 
         parameter.DbType = DbType.String;
     }
 }
 ```
 
-**2. 在程式啟動時 (例如 `Program.cs` 或 `Startup.cs`) 註冊它：**
+### 2. 註冊 Handler (只需執行一次)
+
+在你的程式啟動點（例如 `Program.cs`、`Startup.cs` 或資料庫連線工廠的建構子中）：
 
 ```csharp
-// 只需要執行一次
+// 告訴 Dapper 只要看到 BetType，就用我們寫的 Handler 處理
 SqlMapper.AddTypeHandler(new BetTypeHandler());
 ```
 
-**3. 你的 Query 程式碼完全不用改：**
+### 3. 為什麼這樣寫可以同時運作？
 
-```csharp
-// Dapper 會自動使用上面註冊的 Handler 來轉換
-return await dbConnection.QueryAsync<HaSetting>(query);
-```
+這個邏輯之所以有效，是因為 `Enum.TryParse` 的第三個參數 `ignoreCase: true` 非常強大，配合 `Replace("_", "")` 可以通吃：
 
----
+| DB 值 (Input) | 處理後 (cleanValue) | Enum 名稱 (Target) | 結果 |
+| :--- | :--- | :--- | :--- |
+| `BANKER_PAIR` | `BANKERPAIR` | `BankerPair` | **成功** (忽略大小寫與底線) |
+| `BankerPair` | `BankerPair` | `BankerPair` | **成功** (完全匹配) |
+| `Small_Tiger` | `SmallTiger` | `SmallTiger` | **成功** |
+| `Tie` | `Tie` | `Tie` | **成功** |
 
-### 方法二：修改 C# Enum 名稱 (最快速，但違反命名慣例)
-
-如果你不介意 C# 的命名規範，可以直接把 Enum 的名稱改成跟 DB 一樣 (Dapper 比對時不分大小寫，所以只要加底線即可)。
-
-**修改 Enum 定義：**
-
-```csharp
-public enum BetType : byte
-{
-    Manual,
-    Player,
-    Banker,
-    Small_Tiger, // 加了底線
-    Big_Tiger,   // 加了底線
-    Lucky_Six,   // 加了底線
-    Tie,
-    Player_Pair, // 加了底線
-    Banker_Pair, // 加了底線
-    // ... 其他同理
-}
-```
-
-這樣 Dapper 就能自動把 `PLAYER_PAIR` 對應到 `Player_Pair`。
-
----
-
-### 方法三：在 Model 中做轉換 (不推薦修改 Enum 時使用)
-
-保持 `HaSetting` 類別裡的屬性與 DB 欄位對應，先接成字串，再轉成 Enum。
-
-**修改 `HaSetting` 類別：**
-
-```csharp
-public class HaSetting
-{
-    public int Id { get; set; }
-    
-    // 1. 對應 DB 的原始欄位，名稱要跟 SQL select 出來的欄位名一樣 (或用 [Column] attribute)
-    // 注意：這裡設為 private 或 internal，不讓外部直接用
-    public string bet_type { get; set; } 
-
-    // 2. 提供給程式邏輯用的 Enum 屬性
-    public BetType BetType 
-    {
-        get 
-        {
-            if (string.IsNullOrEmpty(bet_type)) return BetType.Manual;
-            
-            // 移除底線後解析
-            var cleanName = bet_type.Replace("_", "");
-            if (Enum.TryParse<BetType>(cleanName, true, out var result))
-            {
-                return result;
-            }
-            return BetType.Manual;
-        }
-    }
-
-    // ... 其他屬性
-}
-```
-
-### 總結
-
-建議使用 **方法一 (TypeHandler)**。因為：
-1.  不需要弄髒你的 Enum 定義 (保持 C# 的 PascalCase 規範)。
-2.  不需要在每個 Model 類別裡寫重複的轉換邏輯。
-3.  這是一勞永逸的解法，以後任何地方用到 `BetType`，Dapper 都能自動處理。
+這樣你就不需要寫兩個 `if` 來判斷，邏輯最簡潔且效能最好。
