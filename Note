@@ -1,354 +1,180 @@
 *Thinking...*
 
-> **Refining Requirements Gathering**
+> **Mapping the Data**
 > 
-> I'm now prioritizing the user's explicit throughput needs to avoid over-engineering. Initial performance goals seem modest. Therefore, I will need to understand what constitutes an acceptable performance baseline. My next step will be to explore the logging library that the user intends to employ.
-> 
-> 
-> **Prioritizing Simplicity**
-> 
-> I'm now shifting my focus away from extreme optimization techniques. The user's throughput needs are remarkably low. With an anticipated writing rate of approximately 10KB/s, I/O performance won't be a constraint. Consequently, I am prioritizing ease of use, simplicity of design, and the user's need for near-instant visibility of logged events.
+> I'm currently focused on the user's request, specifically how to take the database's `bet_type` values and transform them into a C# Enum. The goal is clear, and I've started breaking down the input data to identify the necessary steps. This involves understanding the `bet_type` column's values.
 > 
 > 
-> **Assessing Tradeoffs**
+> **Decoding the Input Data**
 > 
-> I'm now contemplating tradeoffs between simplicity, latency, and resource usage. The user's low throughput requirements make latency a key concern. My analysis of the implications of buffering strategies is underway, and I will be looking to balance the need for minimal data loss with the benefits of batching. The Channel pattern still seems useful.
-> 
-> 
-> **Evaluating Flushing Strategies**
-> 
-> I am now focused on a flushing strategy that balances latency and write frequency. The user's throughput needs are modest. I'm considering flushing on a timer or on channel emptiness to minimize latency while still batching writes. I believe periodic flushing combined with standard FileStream buffering should provide an excellent balance.
+> I'm now carefully examining the discrepancies between the database strings (e.g., "PLAYER_PAIR") and the C# enum members (e.g., `BetType.PlayerPair`). It's clear that simple string matching won't work due to the case and format differences. I'm considering the best strategy to reconcile these differences to achieve a reliable conversion.
 > 
 > 
-> **Evaluating Channel Usage**
+> **Devising a Conversion Strategy**
 > 
-> I'm now determining how best to employ the `Channel` pattern. The current plan is to use a `Channel` for decoupling the producer from the file writer. I will be balancing the benefits of decoupling with the potential overhead for such a low-throughput scenario, focusing on the added value for the user. I'll need to explore the specific implementation to ensure minimal impact.
-> 
-> 
-> **Formulating a Recommendation**
-> 
-> I'm now consolidating my thoughts into a revised recommendation for the user. My focus has shifted to simplicity and reduced latency, removing unnecessary complexity from the previous solution. The goal is to provide a reliable logging system that balances immediate visibility with minimal resource overhead. The new approach prioritizes simplicity and readability.
+> The core of the problem is now crystal clear. I'm focusing on the conversion from the database string values to their corresponding enum members. The naming and casing discrepancies are the main obstacle. I'm prioritizing Dapper-friendly solutions, specifically exploring the potential of a custom TypeHandler or implementing a manual conversion within the DTO/model. I am trying to determine the best balance between simplicity and maintainability, so I'm evaluating the pros and cons of each approach.
 > 
 > 
-> **Revisiting Serialization Choices**
+> **Prioritizing a Solution**
 > 
-> I am now focusing on the best serialization strategy. After exploring several approaches, I have concluded that direct serialization to the stream with `JsonSerializer.SerializeAsync` is the simplest, most readable solution, given the user's low throughput. A newline is needed after serialization. The strategy's simplicity outweighs any minor performance concerns.
+> I've evaluated the various approaches to address the mapping problem. Given the constraints and the user's Dapper usage, a custom `TypeHandler` appears to be the most maintainable and efficient approach. I'm now drafting the implementation details, focusing on how the handler will convert the database strings (e.g., "PLAYER_PAIR") to the corresponding enum values (`BetType.PlayerPair`). I'm also considering potential error handling scenarios.
 > 
 > 
-既然你的需求是 **每秒 50 筆**（屬於低頻、輕量級場景），上一版的「極致優化」方案反而會有副作用：
+> **Choosing the Best Path**
+> 
+> I'm now fully committed to the Dapper `TypeHandler` approach, as it offers the best balance of maintainability and performance. My next task is to write the code that converts between the database string values (like "PLAYER_PAIR") and the C# `BetType` enum values (like `BetType.PlayerPair`). I'm focusing on handling different naming styles between the DB and the C# side.
+> 
+> 
+> **Refining the Approach**
+> 
+> I'm now fully immersed in developing the `TypeHandler`. I've started writing the core conversion logic, ensuring it addresses the case and naming differences between the database strings (e.g., "PLAYER_PAIR") and the C# enum (e.g., `BetType.PlayerPair`). I am also taking extra care to handle potential errors and edge cases to make sure it handles all possible inputs.
+> 
+> 
+> **Crafting the TypeHandler**
+> 
+> I am now focusing on the core of my proposed solution. I'm building out the `TypeHandler` class to manage the conversion. I'm writing the `Parse` method to take a database string and correctly convert it to the corresponding enum value, addressing the case and underscore differences encountered in the data. I'm also thinking about the details of how this `TypeHandler` will be registered with Dapper to ensure proper application across the codebase.
+> 
+> 
+從你的截圖來看，你遇到的情況是：
 
-1.  **資料延遲（Latency）**：上一版為了效能，會把資料積滿 64KB 才寫入。以每秒 50 筆（假設每筆 200 bytes）計算，可能要等 **6~7 秒** 資料才會真正寫入硬碟。這在看 Log 時會覺得「怎麼慢半拍？」。
-2.  **代碼複雜度過高**：Source Generator 和手動管理記憶體 Buffer 在這個量級完全是殺雞用牛刀，增加了維護成本。
+1.  **資料庫 (DB)**: `bet_type` 欄位存的是 **字串 (String)**，格式是全大寫且帶底線 (Snake Case)，例如 `PLAYER_PAIR`, `SMALL_TIGER`。
+2.  **C# Enum**: `BetType` 定義的是 **PascalCase**，例如 `PlayerPair`, `SmallTiger`。
+3.  **ORM**: 你使用的是 **Dapper** (`dbConnection.QueryAsync`) 搭配 **Npgsql** (PostgreSQL)。
 
-### 針對「每秒 50 筆」的優化思路
+因為 Dapper 預設在映射 Enum 時，會嘗試比對名字 (Case-insensitive) 或數值。但 `PLAYER_PAIR` (有底線) 和 `PlayerPair` (無底線) 字串不匹配，所以直接 Query 會報錯或變成預設值。
 
-在這個量級下，**性能瓶頸不在 CPU，而在於「即時性」與「代碼簡潔度」的平衡**。
+這裡有三種解決方案，按推薦程度排序：
 
-優化重點調整為：
-1.  **即時性 (Real-time)**：當沒有新資料進來時，應該立刻寫入硬碟，確保 Log 不會因為程式崩潰而遺失。
-2.  **適度緩衝**：利用 `FileStream` 內建的緩衝（預設 4KB）即可，不需要自己寫 Buffer 管理。
-3.  **代碼簡潔**：移除 Source Generator，回歸標準寫法。
+### 方法一：使用 Dapper 的 TypeHandler (最推薦，最乾淨)
 
-### 優化後的代碼（平衡版）
+這是最正規的做法。你可以寫一個轉換器，告訴 Dapper 當遇到 `BetType` 時，該如何把 DB 的字串轉成 Enum。
 
-這個版本非常適合每秒 50~500 筆的場景。它保留了 `Channel` 的非同步優勢（不卡主執行緒），但簡化了寫入邏輯。
+**1. 建立一個 TypeHandler 類別：**
 
 ```csharp
+using Dapper;
 using System;
-using System.IO;
-using System.Text;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Channels;
-using System.Threading.Tasks;
+using System.Data;
+using Galaxy.SmartTable.Integration.Common.Enums; // 你的 Enum namespace
 
-public class LogData
+public class BetTypeHandler : SqlMapper.TypeHandler<BetType>
 {
-    public DateTime Timestamp { get; set; }
-    public string Level { get; set; }
-    public string Message { get; set; }
-    public int DataId { get; set; }
-}
-
-public class SimpleAsyncLogger : IAsyncDisposable
-{
-    private readonly Channel<LogData> _channel;
-    private readonly Task _processTask;
-    private readonly string _filePath;
-    
-    // 換行符號
-    private static readonly byte[] NewLine = Encoding.UTF8.GetBytes(Environment.NewLine);
-
-    public SimpleAsyncLogger(string filePath)
+    // 從 DB 讀取資料轉成 C# Enum
+    public override BetType Parse(object value)
     {
-        _filePath = filePath;
-        // 使用 Unbounded Channel，因為每秒 50 筆遠低於處理速度，不會爆記憶體
-        _channel = Channel.CreateUnbounded<LogData>();
-        _processTask = Task.Run(WriteLoopAsync);
-    }
-
-    // 生產者：外部呼叫此方法，極快，幾乎不耗時
-    public void Log(LogData data)
-    {
-        _channel.Writer.TryWrite(data);
-    }
-
-    // 消費者：後台寫入迴圈
-    private async Task WriteLoopAsync()
-    {
-        // FileStream 內建 4KB Buffer，足以應付每秒 50 筆的 IO 合併
-        // FileShare.Read 允許你在寫入時，用其他編輯器打開 Log 查看
-        using var stream = new FileStream(_filePath, FileMode.Append, FileAccess.Write, FileShare.Read, bufferSize: 4096, useAsync: true);
-        
-        try
+        if (value == null || value is DBNull)
         {
-            while (await _channel.Reader.WaitToReadAsync())
-            {
-                // 盡可能處理佇列中所有積壓的資料
-                while (_channel.Reader.TryRead(out var logData))
-                {
-                    // 1. 序列化 (直接寫入 Stream，簡單明瞭)
-                    await JsonSerializer.SerializeAsync(stream, logData);
-                    // 2. 換行
-                    await stream.WriteAsync(NewLine);
-                }
-
-                // [關鍵優化]：當佇列暫時空了（處理完一批），立刻 Flush 到硬碟
-                // 這樣你可以馬上在檔案裡看到最新的 Log，不會被卡在 Buffer 裡
-                await stream.FlushAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"寫入錯誤: {ex.Message}");
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        _channel.Writer.Complete();
-        await _processTask;
-    }
-}
-
-// --- 使用範例 ---
-class Program
-{
-    static async Task Main(string[] args)
-    {
-        var logger = new SimpleAsyncLogger("app.jsonl");
-
-        Console.WriteLine("開始模擬每秒 50 筆寫入...");
-
-        // 模擬發送資料
-        for (int i = 0; i < 200; i++)
-        {
-            logger.Log(new LogData 
-            { 
-                Timestamp = DateTime.Now, 
-                Level = "INFO", 
-                Message = "系統正常運作中...", 
-                DataId = i 
-            });
-
-            // 模擬每秒 50 筆 (20ms 一筆)
-            await Task.Delay(20);
+            return BetType.Manual; // 設定一個預設值
         }
 
-        Console.WriteLine("寫入完成，正在關閉...");
-        await logger.DisposeAsync();
-        Console.WriteLine("程式結束。");
+        string dbValue = value.ToString();
+
+        // 關鍵步驟：移除底線並忽略大小寫來進行比對
+        // 例如: "PLAYER_PAIR" -> "PLAYERPAIR" -> 對應 Enum 的 PlayerPair
+        string cleanValue = dbValue.Replace("_", "");
+
+        if (Enum.TryParse(typeof(BetType), cleanValue, true, out var result))
+        {
+            return (BetType)result;
+        }
+
+        // 如果對應不到，回傳預設值
+        return BetType.Manual;
+    }
+
+    // 從 C# Enum 寫入到 DB (如果你有 Insert/Update 需求)
+    public override void SetValue(IDbDataParameter parameter, BetType value)
+    {
+        // 這裡看你的需求，如果要存回 "PLAYER_PAIR"，你需要寫邏輯把 PlayerPair 轉回 PLAYER_PAIR
+        // 簡單的做法是轉大寫，但如果有底線需求，可能需要額外處理
+        // 這裡示範簡單轉字串
+        parameter.Value = value.ToString().ToUpper(); 
+        parameter.DbType = DbType.String;
     }
 }
 ```
 
-### 這個版本為什麼最適合你？
+**2. 在程式啟動時 (例如 `Program.cs` 或 `Startup.cs`) 註冊它：**
 
-1.  **自動批次處理**：
-    *   如果瞬間來了 10 筆資料，`TryRead` 迴圈會連續寫入 Stream 的記憶體 Buffer，最後才一次 `FlushAsync`。這避免了頻繁的硬碟 IO。
-2.  **即時可見**：
-    *   一旦處理完手邊的資料（哪怕只有 1 筆），它就會呼叫 `FlushAsync`。這意味著你在 Log 檔案裡幾乎可以即時看到內容，這對除錯非常重要。
-3.  **代碼乾淨**：
-    *   沒有 `ArrayBufferWriter`，沒有 `Source Generator`，沒有複雜的指針操作。完全依賴 .NET 內建且成熟的 API。
-4.  **性能足夠**：
-    *   `JsonSerializer.SerializeAsync` 在 .NET 6/8 已經非常快。對於每秒 50 筆，CPU 佔用率幾乎是 0%。
+```csharp
+// 只需要執行一次
+SqlMapper.AddTypeHandler(new BetTypeHandler());
+```
+
+**3. 你的 Query 程式碼完全不用改：**
+
+```csharp
+// Dapper 會自動使用上面註冊的 Handler 來轉換
+return await dbConnection.QueryAsync<HaSetting>(query);
+```
+
+---
+
+### 方法二：修改 C# Enum 名稱 (最快速，但違反命名慣例)
+
+如果你不介意 C# 的命名規範，可以直接把 Enum 的名稱改成跟 DB 一樣 (Dapper 比對時不分大小寫，所以只要加底線即可)。
+
+**修改 Enum 定義：**
+
+```csharp
+public enum BetType : byte
+{
+    Manual,
+    Player,
+    Banker,
+    Small_Tiger, // 加了底線
+    Big_Tiger,   // 加了底線
+    Lucky_Six,   // 加了底線
+    Tie,
+    Player_Pair, // 加了底線
+    Banker_Pair, // 加了底線
+    // ... 其他同理
+}
+```
+
+這樣 Dapper 就能自動把 `PLAYER_PAIR` 對應到 `Player_Pair`。
+
+---
+
+### 方法三：在 Model 中做轉換 (不推薦修改 Enum 時使用)
+
+保持 `HaSetting` 類別裡的屬性與 DB 欄位對應，先接成字串，再轉成 Enum。
+
+**修改 `HaSetting` 類別：**
+
+```csharp
+public class HaSetting
+{
+    public int Id { get; set; }
+    
+    // 1. 對應 DB 的原始欄位，名稱要跟 SQL select 出來的欄位名一樣 (或用 [Column] attribute)
+    // 注意：這裡設為 private 或 internal，不讓外部直接用
+    public string bet_type { get; set; } 
+
+    // 2. 提供給程式邏輯用的 Enum 屬性
+    public BetType BetType 
+    {
+        get 
+        {
+            if (string.IsNullOrEmpty(bet_type)) return BetType.Manual;
+            
+            // 移除底線後解析
+            var cleanName = bet_type.Replace("_", "");
+            if (Enum.TryParse<BetType>(cleanName, true, out var result))
+            {
+                return result;
+            }
+            return BetType.Manual;
+        }
+    }
+
+    // ... 其他屬性
+}
+```
 
 ### 總結
-對於每秒 50 筆的需求，**「穩定」與「即時」比「極限吞吐量」更重要**。這個版本去除了過度設計，確保你的 Log 寫入既不會卡住主程式，又能即時保存到硬碟。
 
-
-
-
-
-
-
-*Thinking...*
-
-> **Assessing the New Task**
-> 
-> I've been assessing the user's new request, recognizing the shift from writing logs to the task of reading a 500MB file. My initial focus has been on understanding the implicit and explicit requirements, along with the context from the previous interaction. This informs my direction for the next steps.
-> 
-> 
-> **Decoding the Data Format**
-> 
-> I'm now prioritizing the data format, particularly whether it's JSON Lines or a standard JSON array. Considering the logging background and the 500MB size, JSON Lines seems probable. This assumption will affect my code choices. I'm also preparing for the contingency of a standard array format to ensure I propose a flexible, adaptable solution.
-> 
-> 
-> **Formulating the Implementation**
-> 
-> I'm solidifying the implementation strategy. I'm leaning heavily towards an asynchronous `StreamReader` approach, aligning with the file size and performance expectations. The code snippet is shaping up with a focus on asynchronous reading and deserialization, using `JsonSerializer.Deserialize` within a loop. Now, I'm working to refine error handling and consider potential optimizations within the loop, like buffering.
-> 
-> 
-> **Defining the Core Strategy**
-> 
-> I'm now integrating the considerations from before, I've confirmed that the most sensible approach is to leverage `StreamReader` with asynchronous operations, targeting both memory efficiency and responsiveness. I am also leaning toward the use of `IAsyncEnumerable` to provide the consumer with a streamlined way to process the data as it's being read.
-> 
-> 
-> **Defining the Final Output**
-> 
-> I'm now determining how to render the solution in Traditional Chinese, following the provided response guidelines. I'll summarize the streaming concept, highlight the `StreamReader` and `DeserializeAsyncEnumerable` approaches. I also will re-iterate the benefits of each for the user's situation. Lastly, I will make sure the output addresses the "50 objects/second" writing context, to be certain I have taken that into consideration.
-> 
-> 
-> **Summarizing the Approach**
-> 
-> I'm now fully immersed in the creation of the final Traditional Chinese output, leveraging the streaming methods I've chosen. I am confident I'll address all the user requirements, particularly the 50 objects/second constraint, and the data format. The focus remains on making the code streamlined and easy to understand.
-> 
-> 
-讀取 **500MB** 的檔案，策略與寫入完全不同。
-
-對於 500MB 的文字檔：
-1.  **絕對不能** 用 `File.ReadAllText()`：這會瞬間吃掉 1GB~2GB 的記憶體（字串本身 + 物件轉換），容易導致 `OutOfMemory` 或讓電腦卡頓。
-2.  **必須使用** **流式讀取 (Streaming)**：讀一行、處理一行、丟掉一行。這樣無論檔案是 500MB 還是 50GB，記憶體佔用永遠只維持在幾 KB。
-
-針對你的 Log 場景（假設是 JSON Lines 格式，即每一行是一個 JSON），最推薦使用 **`IAsyncEnumerable`** 配合 **`StreamReader`**。
-
-### 最佳實作：`IAsyncEnumerable` (逐行串流)
-
-這種寫法的好處是：**外部呼叫者可以一邊讀、一邊處理，不用等整個檔案讀完。**
-
-```csharp
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text.Json;
-using System.Threading.Tasks;
-
-public class LogReader
-{
-    // 這是上一段定義的 LogData
-    public class LogData
-    {
-        public DateTime Timestamp { get; set; }
-        public string Level { get; set; }
-        public string Message { get; set; }
-        public int DataId { get; set; }
-    }
-
-    // 使用 IAsyncEnumerable 實現「懶加載」
-    public static async IAsyncEnumerable<LogData> ReadLogsAsync(string filePath)
-    {
-        if (!File.Exists(filePath)) yield break;
-
-        // FileShare.ReadWrite 允許在讀取時，其他程序(或你的寫入器)繼續寫入
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var reader = new StreamReader(stream);
-
-        string? line;
-        while ((line = await reader.ReadLineAsync()) != null)
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-
-            LogData? data = null;
-            try
-            {
-                // 反序列化單行
-                data = JsonSerializer.Deserialize<LogData>(line);
-            }
-            catch (JsonException)
-            {
-                // 忽略格式錯誤的行 (例如檔案結尾寫到一半)
-                continue;
-            }
-
-            if (data != null)
-            {
-                // 這裡會將資料「一筆一筆」丟給呼叫者
-                // 記憶體中永遠只有這一筆資料
-                yield return data;
-            }
-        }
-    }
-}
-
-// --- 使用範例 ---
-class Program
-{
-    static async Task Main(string[] args)
-    {
-        string filePath = "app.jsonl";
-        int count = 0;
-
-        Console.WriteLine("開始讀取 500MB 檔案...");
-
-        // await foreach 是關鍵
-        // 它不會卡住，讀到一筆就會跑進迴圈一次
-        await foreach (var log in LogReader.ReadLogsAsync(filePath))
-        {
-            count++;
-            
-            // 模擬處理邏輯：例如只印出 Error 等級的 Log
-            if (log.Level == "ERROR")
-            {
-                Console.WriteLine($"發現錯誤: {log.Message} 時間: {log.Timestamp}");
-            }
-
-            // 每處理 10000 筆顯示一下進度，讓你感覺程式在跑
-            if (count % 10000 == 0)
-            {
-                Console.Write($"\r已處理: {count} 筆...");
-            }
-        }
-
-        Console.WriteLine($"\n讀取完成，共 {count} 筆資料。");
-    }
-}
-```
-
-### 為什麼這樣做最適合你？
-
-1.  **記憶體極省**：
-    *   不管檔案 500MB 還是 10GB，這個程式只會佔用 **幾 MB** 的記憶體。因為它讀完一行 `line`，轉成 `LogData` 交給 `await foreach` 後，那行字串就被 GC 回收了。
-
-2.  **反應速度快**：
-    *   如果你用 `List<T>` 存所有資料，使用者要等 5~10 秒檔案全部讀完才能看到第一筆資料。
-    *   用 `yield return`，程式啟動 **幾毫秒後**，第一筆資料就會顯示在畫面上。
-
-3.  **不卡 UI / 主執行緒**：
-    *   全程 `async/await`，讀取硬碟時 CPU 會讓出來做別的事，不會讓視窗程式顯示「沒有回應」。
-
-### 特殊情況：如果你的檔案是標準 JSON Array (`[...]`)
-
-如果你的 Log 檔案格式不是一行一個 JSON，而是一個巨大的陣列：
-```json
-[
-  {"Timestamp":...},
-  {"Timestamp":...}
-]
-```
-那 `ReadLineAsync` 就不能用了。這時候要用 .NET 內建的 `DeserializeAsyncEnumerable`：
-
-```csharp
-public static async IAsyncEnumerable<LogData> ReadJsonArrayAsync(string filePath)
-{
-    using var stream = File.OpenRead(filePath);
-    
-    // 這是專門用來讀取巨大 JSON Array 的方法，不會一次載入記憶體
-    await foreach (var data in JsonSerializer.DeserializeAsyncEnumerable<LogData>(stream))
-    {
-        if (data != null) yield return data;
-    }
-}
-```
-
-**總結建議**：
-既然你是自己寫 Log，強烈建議使用 **JSON Lines (一行一筆)** 格式（如我上一個回答的寫法），配合第一種 `StreamReader + ReadLineAsync` 的讀取方式。這是處理 Log 檔案的業界標準，效能最好且最不容易出錯。
+建議使用 **方法一 (TypeHandler)**。因為：
+1.  不需要弄髒你的 Enum 定義 (保持 C# 的 PascalCase 規範)。
+2.  不需要在每個 Model 類別裡寫重複的轉換邏輯。
+3.  這是一勞永逸的解法，以後任何地方用到 `BetType`，Dapper 都能自動處理。
