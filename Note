@@ -1,193 +1,96 @@
-*Thinking...*
-
-> **Reflecting on the Goal**
-> 
-> I've been drilling down on the user's objective: to configure bet types and categories solely through a configuration file. The core problem is clear: how to make the system flexible and maintainable. I'm considering various approaches to structure this configuration data and ensure it's easily parsed and used by the application.
-> 
-> 
-> **Mapping the Strategy**
-> 
-> Now I'm focusing on the implementation. The string-based `BetType` will require a flexible mapping approach. I'm exploring dictionaries or other lookup tables to associate `BetType` strings with their respective `BetCategory`. I'm also thinking about the configuration file format: JSON, YAML, or a custom format will need to be chosen, considering factors like readability, ease of parsing, and validation capabilities.
-> 
-> 
-> **Revisiting the Model**
-> 
-> I've been contemplating the data model updates. Realizing the need for a `string`-based `BetType` opens up a crucial question: How does this impact existing codebase? I am weighing the tradeoffs between complete refactoring and a more incremental approach that might involve introducing a string-based type alongside the existing enum, potentially for a transition period.
-> 
-> 
-> **Formulating the Implementation**
-> 
-> I'm now zeroing in on the crucial switch from enum to string for the `BetType` property. I am considering the implications this change has on existing code that assumes an enum, as I need to maintain backwards compatibility. I am also working through how the config service should manage both config file reading and provide the lookup functionality.
-> 
-> 
-> **Concluding the Analysis**
-> 
-> I've reached a firm conclusion on the core strategy. The `BetType` property in the data model *must* be changed from an enum to a string to achieve the user's requirements. This is non-negotiable for true dynamic behavior, as enums are inherently static. I am confident in the config structure and the lookup mechanism, but now I'll prepare a clear, straightforward explanation for the user, addressing their "don't change enum" constraint.
-> 
-> 
-> **Defining the Implementation**
-> 
-> Now I'm designing the system's behavior. I've decided to keep the `BetCategory` as a `enum`. The key focus is now the `BetConfigManager` class. This must include methods for reading the configuration, building the lookup table, and providing the classification lookup. Error handling in case a bet type is not found must also be implemented.
-> 
-> 
-> **Defining the Response**
-> 
-> I'm now formulating a response to the user. I'll need to be clear and direct: the `BetType` *must* be a string to satisfy the dynamic requirements. I'm focusing on providing the user with concise, unambiguous code samples and clear instructions to make the transition as smooth as possible, which requires carefully tailoring the examples to the user's specific constraints.
-> 
-> 
-這是一個非常關鍵的架構決策。
-
-首先必須向您說明一個 C# 的核心概念：**`enum`（列舉）是「編譯時（Compile-time）」確定的常數。** 也就是說，一旦程式編譯成 `.exe` 或 `.dll`，`enum` 裡面的內容就寫死了。
-
-如果您希望 **「完全不改程式碼（不重新編譯）」** 就能新增 `BetType`，那麼您的程式碼中**不能再使用 `enum` 來定義 BetType，而必須改用 `string`（字串）**。
-
-這是一個非常常見的企業級開發模式：**「字串驅動（String Driven）配置」**。
-
-以下是達成您需求的完整方案：
-
-### 核心改變
-1.  **捨棄** `BetType` 這個 `enum`（或者只保留它作為舊相容，但新邏輯不再依賴它）。
-2.  將類別中的 `BetType` 屬性型別改為 `string`。
-3.  所有的對應關係都在 `appsettings.json` 中定義。
-
----
-
-### 1. 設定檔 (appsettings.json)
-這是您唯一需要維護的地方。想加什麼新的賭注，直接寫在這裡，存檔即可生效。
-
-```json
 {
-  "BetMapping": {
-    // 這裡定義 MainBet 有哪些
-    "MainBet": [ 
-      "PLAYER", 
-      "BANKER" 
-    ],
-    // 這裡定義 SideBet 有哪些，您可以隨意新增，例如 "DRAGON_BONUS"
-    "SideBet": [ 
-      "SMALL_TIGER", 
-      "BIG_TIGER", 
-      "PLAYER_PAIR", 
-      "LUCKY_SIX", 
-      "TIE", 
-      "BANKER_PAIR", 
-      "SUPER_SEVEN", 
-      "SUPER_LUCKY",
-      "MY_NEW_CUSTOM_BET" 
-    ]
-  }
-}
-```
-
-### 2. 配置讀取器 (BetConfigManager)
-這個類別負責把 JSON 設定讀進來，並轉換成一個快速查詢表（Dictionary）。
-
-```csharp
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using Microsoft.Extensions.Configuration;
-
-public static class BetConfigManager
-{
-    // 核心查詢表：Key是賭注名稱(string), Value是分類(BetCategory)
-    private static Dictionary<string, BetCategory> _betMap;
-
-    static BetConfigManager()
+  "type": "record",
+  "name": "GameUpdateEvent",
+  "namespace": "com.casino.wdt",
+  "fields": [
     {
-        LoadConfig();
-    }
-
-    private static void LoadConfig()
+      "name": "header",
+      "type": {
+        "type": "record",
+        "name": "Header",
+        "fields": [
+          { "name": "messageId", "type": "string", "doc": "Unique ID for every message" },
+          { "name": "propertyId", "type": "string", "doc": "Property/site identifier" },
+          { "name": "event", "type": "string", "doc": "Event name" },
+          { "name": "eventType", "type": ["null", "string"], "default": null, "doc": "Type of event" },
+          { "name": "eventTime", "type": "string", "doc": "Event date and time" },
+          { "name": "gamingDay", "type": "string", "doc": "Current gaming day" }
+        ]
+      }
+    },
     {
-        var builder = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
-        
-        var config = builder.Build();
-        
-        _betMap = new Dictionary<string, BetCategory>(StringComparer.OrdinalIgnoreCase);
-
-        // 1. 讀取 MainBet 清單，並寫入字典
-        var mainBets = config.GetSection("BetMapping:MainBet").Get<string[]>() ?? Array.Empty<string>();
-        foreach (var bet in mainBets)
-        {
-            if (!_betMap.ContainsKey(bet))
-            {
-                _betMap.Add(bet, BetCategory.MainBet);
+      "name": "content",
+      "type": {
+        "type": "record",
+        "name": "Content",
+        "fields": [
+          { "name": "pitName", "type": ["null", "string"], "default": null },
+          { "name": "tableName", "type": ["null", "string"], "default": null },
+          { "name": "dealerId", "type": ["null", "string"], "default": null },
+          { "name": "supervisorId", "type": ["null", "string"], "default": null },
+          {
+            "name": "gameDetails",
+            "type": {
+              "type": "record",
+              "name": "GameDetails",
+              "fields": [
+                { "name": "gameId", "type": "long" },
+                { "name": "startTime", "type": "string" },
+                { "name": "endTime", "type": ["null", "string"], "default": null },
+                { "name": "gameResult", "type": ["null", "string"], "default": null },
+                {
+                  "name": "seatDetails",
+                  "type": {
+                    "type": "array",
+                    "items": {
+                      "type": "record",
+                      "name": "SeatDetail",
+                      "fields": [
+                        { "name": "seat", "type": "int" },
+                        {
+                          "name": "betDetails",
+                          "type": {
+                            "type": "array",
+                            "items": {
+                              "type": "record",
+                              "name": "BetDetail",
+                              "fields": [
+                                { "name": "seatLabel", "type": "string" },
+                                { "name": "patronId", "type": ["null", "string"], "default": null },
+                                { "name": "ratingId", "type": ["null", "long", "int"], "default": null, "doc": "Using union for safety as sample shows int but ID might grow" },
+                                { "name": "sessionId", "type": ["null", "string"], "default": null },
+                                { "name": "isSeated", "type": "boolean" },
+                                { "name": "isRated", "type": "boolean" },
+                                { "name": "betType", "type": "string" },
+                                {
+                                  "name": "chipsetDetails",
+                                  "type": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "record",
+                                      "name": "ChipsetDetail",
+                                      "fields": [
+                                        { "name": "betChipset", "type": "string" },
+                                        { "name": "betAmt", "type": "double" },
+                                        { "name": "betWinLoss", "type": "double" },
+                                        { "name": "betTheoWin", "type": "double" }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
             }
-        }
-
-        // 2. 讀取 SideBet 清單，並寫入字典
-        var sideBets = config.GetSection("BetMapping:SideBet").Get<string[]>() ?? Array.Empty<string>();
-        foreach (var bet in sideBets)
-        {
-            if (!_betMap.ContainsKey(bet))
-            {
-                _betMap.Add(bet, BetCategory.SideBet);
-            }
-        }
+          }
+        ]
+      }
     }
-
-    public static BetCategory GetCategory(string betTypeStr)
-    {
-        if (string.IsNullOrWhiteSpace(betTypeStr)) return BetCategory.NA;
-
-        // 嘗試在字典中查找
-        if (_betMap.TryGetValue(betTypeStr, out BetCategory category))
-        {
-            return category;
-        }
-
-        return BetCategory.NA;
-    }
+  ]
 }
-```
-
-### 3. 修改您的 Data Model
-這是最重要的一步。為了達成「不改 Code 就能加 BetType」，原本的 `public BetType BetType` 必須改成 `string`。
-
-```csharp
-public class YourDataModel
-{
-    // ... 其他屬性 ...
-
-    // 【修改點 1】: 將型別從 enum 改為 string
-    // 這樣您在資料庫或前端傳入 "ANY_NEW_STRING" 時，程式都不會報錯
-    public string BetType { get; set; } = string.Empty;
-
-    // 【修改點 2】: BetCategory 的邏輯現在完全依賴 Config
-    public BetCategory BetCategory
-    {
-        get
-        {
-            // 直接把字串丟給 Manager 去判斷
-            return BetConfigManager.GetCategory(this.BetType);
-        }
-    }
-
-    // ... 其他屬性 ...
-}
-
-// BetCategory 這種分類通常比較固定，可以保留 Enum
-public enum BetCategory
-{
-    NA,
-    MainBet,
-    SideBet
-}
-```
-
-### 這樣做達到了什麼效果？
-
-1.  **完全動態**：明天你想加一個賭注叫 `"SUPER_DRAGON"`，你只需要打開 `appsettings.json`，在 `SideBet` 的陣列裡加上 `"SUPER_DRAGON"`。
-2.  **無需編譯**：存檔後，重啟程式（或如果實作了熱重載甚至不用重啟），`YourDataModel` 收到 `BetType = "SUPER_DRAGON"` 時，`BetCategory` 就會自動回傳 `SideBet`。
-3.  **無需維護 Enum**：你再也不用去打開 C# 檔案修改 `enum BetType { ... }` 了，那個檔案甚至可以刪除。
-
-### 常見問題：如果原本的程式其他地方依賴 `BetType` Enum 怎麼辦？
-
-如果您的專案很大，其他地方（如 Switch Case）大量使用了 `BetType` Enum，改動成 `string` 可能會導致編譯錯誤。
-
-**折衷方案（過渡期做法）：**
-保留 `BetType` Enum，但在 Model 中使用 `string` 接收資料（例如從 DB 或 API），只有在需要舊邏輯時才試著 Parse 成 Enum。但在計算 `BetCategory` 時，**只使用字串比對**（如上述代碼），這樣就能繞過 Enum 的限制。
