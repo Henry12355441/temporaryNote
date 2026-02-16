@@ -1,48 +1,17 @@
-@startuml
-autonumber
+// 你需要引用 Dapper 命名空間
+SqlMapper.AddTypeHandler(new StringEnumTypeHandler<CmpSyncStatus>());
 
-actor "Player" as Player
-participant "Table Games Staff" as Staff
-participant "Jackpot System" as System
-participant "GEG CRM" as CRM
-participant "Customer Service" as CS
-participant "GPC Counter" as GPC
-participant "Cage" as Cage
-participant "Gaming Audit" as Audit
+// 定義一個通用的 Handler
+public class StringEnumTypeHandler<T> : SqlMapper.TypeHandler<T>
+{
+    public override void SetValue(IDbDataParameter parameter, T value)
+    {
+        // 關鍵在這裡：將值設為字串
+        parameter.Value = value.ToString();
+    }
 
-title Progressive Jackpot Process Flow
-
-== Jackpot Trigger ==
-Player -> Staff: Progressive Jackpot won
-Staff -> System: Verify event & identify player
-System -> CRM: Record table number, amount, timestamp
-
-== Record Creation & System Notification ==
-CRM -> System: Transmit jackpot event record
-CRM -> CRM: Generate transaction record & ID
-CRM -> CS: Notify Customer Service team
-
-== Comp Slip Issuance ==
-CS -> CRM: Validate jackpot details
-CRM -> GPC: Print Comp Slip (unique ID)
-note right of GPC
-  Duplicate issuance prohibited
-  Reprints allowed if not redeemed
-end note
-
-== Chip Collection from Cage ==
-GPC -> Cage: Present Comp Slip
-Cage -> CRM: Confirm validity
-Cage -> GPC: Release chips
-Cage -> Audit: Log chip release for audit
-
-== Guest Payout at Table ==
-GPC -> Staff: Deliver chips
-Staff -> Player: Acknowledge receipt
-
-== Redemption Completion & Audit Trail ==
-CRM -> System: Cross-reference transaction ID
-CRM -> CRM: Update Comp Slip status to "redeemed"
-CRM -> Audit: Ret
-
-@enduml
+    public override T Parse(object value)
+    {
+        return (T)Enum.Parse(typeof(T), value.ToString());
+    }
+}
