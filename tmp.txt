@@ -1,0 +1,15 @@
+# 尝试使用 py 启动器（通常随 Python 安装）
+py --version
+
+# 如果 py 可用，用以下命令安装 graphifyy
+py -m pip install graphifyy
+
+
+cd C:\你的dotnet项目路径
+graphify opencode install
+
+
+
+gitignore
+.opencode/
+graphify-out/
