@@ -13,3 +13,10 @@ graphify opencode install
 gitignore
 .opencode/
 graphify-out/
+
+
+
+
+CREATE INDEX CONCURRENTLY idx_eqr_acct_post_dtm
+ON rating.earning_qualified_ratings (acct, post_dtm DESC)
+WHERE NOT is_void;
